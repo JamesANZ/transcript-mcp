@@ -20,6 +20,7 @@ export interface Config {
   whisperModelPath?: string;
   ytDlpPath: string;
   ffmpegPath: string;
+  ffprobePath: string;
   debug: boolean;
 }
 
@@ -38,6 +39,9 @@ export function getConfig(): Config {
     whisperModelPath: process.env.WHISPER_MODEL_PATH,
     ytDlpPath: process.env.YT_DLP_PATH || "yt-dlp",
     ffmpegPath: process.env.FFMPEG_PATH || "ffmpeg",
+    ffprobePath:
+      process.env.FFPROBE_PATH ||
+      (process.env.FFMPEG_PATH || "ffmpeg").replace("ffmpeg", "ffprobe"),
     debug: process.env.DEBUG === "1",
   };
 }
@@ -54,7 +58,8 @@ export async function ensureStorageDir(config: Config): Promise<void> {
  */
 export async function checkToolAvailable(toolPath: string): Promise<boolean> {
   try {
-    await execAsync(`which ${toolPath}`);
+    const executable = toolPath.split(" ")[0];
+    await execAsync(`which ${executable}`);
     return true;
   } catch {
     return false;
@@ -110,6 +115,12 @@ export async function validateRequiredTools(
   if (!(await checkToolAvailable(config.ffmpegPath))) {
     errors.push(
       `ffmpeg not found at '${config.ffmpegPath}'. Install with: brew install ffmpeg`,
+    );
+  }
+
+  if (!(await checkToolAvailable(config.ffprobePath))) {
+    errors.push(
+      `ffprobe not found at '${config.ffprobePath}'. Install with: brew install ffmpeg`,
     );
   }
 

@@ -5,8 +5,17 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join, dirname, basename } from "path";
-import { readFile, writeFile, unlink, stat } from "fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  writeFile,
+  unlink,
+  stat,
+  copyFile,
+  rm,
+} from "fs/promises";
 import { createReadStream } from "fs";
+import { tmpdir } from "os";
 import OpenAI from "openai";
 import { Config, detectWhisperEngine, checkToolAvailable } from "./config.js";
 
@@ -34,6 +43,23 @@ export interface TranscriptionSegment {
   start: number;
   end: number;
   text: string;
+}
+
+export interface AudioTranscriptionOptions {
+  audioPath?: string;
+  audioBase64?: string;
+  audioResourceUri?: string;
+  filename?: string;
+  language?: string;
+  engine?: WhisperEngineType | "auto";
+}
+
+export interface AudioTranscriptionResult {
+  transcript: string;
+  language: string;
+  duration: number;
+  engine: WhisperEngineType;
+  segments: TranscriptionSegment[];
 }
 
 export class SubtitleGenerator {
@@ -135,6 +161,68 @@ export class SubtitleGenerator {
     }
   }
 
+  async transcribeAudio(
+    options: AudioTranscriptionOptions,
+  ): Promise<AudioTranscriptionResult> {
+    const tempDir = await mkdtemp(join(tmpdir(), "video-toolkit-audio-"));
+    let materializedAudioPath: string | undefined;
+    let normalizedAudioPath: string | undefined;
+
+    try {
+      materializedAudioPath = await this.materializeAudioInput(options, tempDir);
+      normalizedAudioPath = join(tempDir, "normalized.wav");
+      await this.normalizeAudio(materializedAudioPath, normalizedAudioPath);
+
+      const { selectedEngine, fallbackEngine } =
+        await this.resolveTranscriptionEngines(options.engine);
+      const language = options.language;
+      let selectedResult:
+        | { segments: TranscriptionSegment[]; language: string }
+        | undefined;
+      let usedEngine: WhisperEngineType = selectedEngine;
+      let primaryError: string | undefined;
+
+      try {
+        selectedResult =
+          selectedEngine === "openai"
+            ? await this.transcribeWithOpenAI(normalizedAudioPath, language)
+            : await this.transcribeWithLocalWhisper(normalizedAudioPath, language);
+      } catch (error) {
+        primaryError = error instanceof Error ? error.message : String(error);
+      }
+
+      if (!selectedResult && fallbackEngine) {
+        this.log(
+          `Primary ${selectedEngine} transcription failed, trying ${fallbackEngine} fallback`,
+        );
+        selectedResult =
+          fallbackEngine === "openai"
+            ? await this.transcribeWithOpenAI(normalizedAudioPath, language)
+            : await this.transcribeWithLocalWhisper(normalizedAudioPath, language);
+        usedEngine = fallbackEngine;
+      }
+
+      if (!selectedResult) {
+        throw new Error(
+          primaryError || "Transcription failed and no fallback engine available.",
+        );
+      }
+
+      const transcript = selectedResult.segments.map((seg) => seg.text).join(" ");
+      const duration = await this.getAudioDuration(normalizedAudioPath);
+
+      return {
+        transcript,
+        language: selectedResult.language,
+        duration,
+        engine: usedEngine,
+        segments: selectedResult.segments,
+      };
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   /**
    * Extract audio from video using ffmpeg
    */
@@ -168,17 +256,175 @@ export class SubtitleGenerator {
     }
   }
 
+  private async materializeAudioInput(
+    options: AudioTranscriptionOptions,
+    tempDir: string,
+  ): Promise<string> {
+    const providedInputs = [
+      options.audioPath,
+      options.audioBase64,
+      options.audioResourceUri,
+    ].filter(Boolean);
+
+    if (providedInputs.length !== 1) {
+      throw new Error(
+        "Provide exactly one audio input: audio_path, audio_base64, or audio_resource_uri.",
+      );
+    }
+
+    if (options.audioPath) {
+      await stat(options.audioPath).catch(() => {
+        throw new Error(`Audio file not found: ${options.audioPath}`);
+      });
+      const pathFromName = options.filename || basename(options.audioPath);
+      const outputPath = join(tempDir, pathFromName);
+      await copyFile(options.audioPath, outputPath);
+      return outputPath;
+    }
+
+    if (options.audioBase64) {
+      const filename = options.filename || "audio-upload.bin";
+      const outputPath = join(tempDir, filename);
+      const bytes = Buffer.from(options.audioBase64, "base64");
+      if (bytes.length === 0) {
+        throw new Error("audio_base64 decoded to an empty payload.");
+      }
+      await writeFile(outputPath, bytes);
+      return outputPath;
+    }
+
+    const uri = options.audioResourceUri as string;
+    if (uri.startsWith("file://")) {
+      const filePath = decodeURIComponent(uri.replace("file://", ""));
+      await stat(filePath).catch(() => {
+        throw new Error(`Audio resource URI file not found: ${uri}`);
+      });
+      const pathFromName = options.filename || basename(filePath);
+      const outputPath = join(tempDir, pathFromName);
+      await copyFile(filePath, outputPath);
+      return outputPath;
+    }
+
+    if (uri.startsWith("data:")) {
+      const match = uri.match(/^data:.*?;base64,(.+)$/);
+      if (!match) {
+        throw new Error(
+          "Unsupported data URI format. Expected base64-encoded data URI.",
+        );
+      }
+      const filename = options.filename || "audio-resource.bin";
+      const outputPath = join(tempDir, filename);
+      const bytes = Buffer.from(match[1], "base64");
+      if (bytes.length === 0) {
+        throw new Error("audio_resource_uri data URI decoded to empty payload.");
+      }
+      await writeFile(outputPath, bytes);
+      return outputPath;
+    }
+
+    throw new Error(
+      "Unsupported audio_resource_uri scheme. Use file:// or data: URI.",
+    );
+  }
+
+  private async normalizeAudio(
+    inputPath: string,
+    outputPath: string,
+  ): Promise<void> {
+    const command = [
+      this.config.ffmpegPath,
+      "-i",
+      `"${inputPath}"`,
+      "-vn",
+      "-acodec",
+      "pcm_s16le",
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      "-y",
+      `"${outputPath}"`,
+    ].join(" ");
+
+    this.log(`Normalizing audio: ${command}`);
+
+    try {
+      await execAsync(command, { maxBuffer: 50 * 1024 * 1024 });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to normalize audio. Ensure ffmpeg supports this format: ${errorMessage}`,
+      );
+    }
+  }
+
   /**
    * Get video duration using ffprobe
    */
   private async getVideoDuration(videoPath: string): Promise<number> {
     try {
-      const command = `${this.config.ffmpegPath.replace("ffmpeg", "ffprobe")} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
+      const command = `${this.config.ffprobePath} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
       const { stdout } = await execAsync(command);
       return parseFloat(stdout.trim()) || 0;
     } catch {
       return 0;
     }
+  }
+
+  private async getAudioDuration(audioPath: string): Promise<number> {
+    try {
+      const command = `${this.config.ffprobePath} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`;
+      const { stdout } = await execAsync(command);
+      return parseFloat(stdout.trim()) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async resolveTranscriptionEngines(
+    requestedEngine?: WhisperEngineType | "auto",
+  ): Promise<{
+    selectedEngine: WhisperEngineType;
+    fallbackEngine?: WhisperEngineType;
+  }> {
+    const availableEngines = await this.getAvailableEngines();
+    if (availableEngines.length === 0) {
+      throw new Error(
+        "No transcription engine available. Set OPENAI_API_KEY or install local whisper.",
+      );
+    }
+
+    if (requestedEngine === "openai") {
+      if (!availableEngines.includes("openai")) {
+        throw new Error(
+          "Requested engine 'openai' is unavailable. Set OPENAI_API_KEY.",
+        );
+      }
+      return {
+        selectedEngine: "openai",
+        fallbackEngine: availableEngines.includes("local") ? "local" : undefined,
+      };
+    }
+
+    if (requestedEngine === "local") {
+      if (!availableEngines.includes("local")) {
+        throw new Error(
+          "Requested engine 'local' is unavailable. Install local whisper.",
+        );
+      }
+      return { selectedEngine: "local" };
+    }
+
+    const selectedEngine: WhisperEngineType = availableEngines.includes("openai")
+      ? "openai"
+      : "local";
+    const fallbackEngine: WhisperEngineType | undefined =
+      selectedEngine === "openai" && availableEngines.includes("local")
+        ? "local"
+        : undefined;
+
+    return { selectedEngine, fallbackEngine };
   }
 
   /**

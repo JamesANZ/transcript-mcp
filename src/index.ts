@@ -216,6 +216,59 @@ class TranscriptMCPServer {
             additionalProperties: false,
           },
         },
+        {
+          name: "transcribe-audio",
+          description:
+            "Transcribe client-provided audio using OpenAI Whisper or local whisper with automatic format normalization.",
+          inputSchema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {
+              audio_path: {
+                type: "string",
+                description:
+                  "Absolute path to a local audio file on the MCP host.",
+              },
+              audio_base64: {
+                type: "string",
+                description:
+                  "Base64-encoded audio payload supplied by the MCP client.",
+              },
+              audio_resource_uri: {
+                type: "string",
+                description:
+                  "Audio resource URI, supported schemes: file:// and data:...;base64,...",
+              },
+              filename: {
+                type: "string",
+                description:
+                  "Optional filename used when materializing base64/resource inputs.",
+              },
+              engine: {
+                type: "string",
+                enum: ["openai", "local", "auto"],
+                description:
+                  "Transcription engine preference. 'auto' uses OpenAI first and falls back to local whisper when available.",
+              },
+              language: {
+                type: "string",
+                description:
+                  "Language code for transcription (e.g., 'en', 'es', 'fr'). Default: auto-detect",
+              },
+              include_timestamps: {
+                type: "boolean",
+                description:
+                  "Include [MM:SS] timestamps in transcript text output. Default: true",
+              },
+            },
+            oneOf: [
+              { required: ["audio_path"] },
+              { required: ["audio_base64"] },
+              { required: ["audio_resource_uri"] },
+            ],
+            additionalProperties: false,
+          },
+        },
       ],
     }));
 
@@ -260,6 +313,18 @@ class TranscriptMCPServer {
                 engine?: string;
                 language?: string;
                 output_format?: string;
+              },
+            );
+          case "transcribe-audio":
+            return await this.handleTranscribeAudio(
+              args as {
+                audio_path?: string;
+                audio_base64?: string;
+                audio_resource_uri?: string;
+                filename?: string;
+                engine?: string;
+                language?: string;
+                include_timestamps?: boolean;
               },
             );
           default:
@@ -569,6 +634,84 @@ class TranscriptMCPServer {
     } catch (error) {
       throw new Error(
         `Failed to generate subtitles: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async handleTranscribeAudio(args: {
+    audio_path?: string;
+    audio_base64?: string;
+    audio_resource_uri?: string;
+    filename?: string;
+    engine?: string;
+    language?: string;
+    include_timestamps?: boolean;
+  }): Promise<{
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+  }> {
+    const {
+      audio_path,
+      audio_base64,
+      audio_resource_uri,
+      filename,
+      engine,
+      language,
+      include_timestamps = true,
+    } = args;
+
+    try {
+      const providedInputs = [audio_path, audio_base64, audio_resource_uri].filter(
+        Boolean,
+      );
+      if (providedInputs.length !== 1) {
+        throw new Error(
+          "Provide exactly one of: audio_path, audio_base64, or audio_resource_uri.",
+        );
+      }
+
+      const result = await this.subtitleGenerator.transcribeAudio({
+        audioPath: audio_path,
+        audioBase64: audio_base64,
+        audioResourceUri: audio_resource_uri,
+        filename,
+        engine: (engine as WhisperEngineType | "auto" | undefined) || "auto",
+        language,
+      });
+
+      const formattedDuration = VideoDownloader.formatDuration(result.duration);
+      const transcriptText = include_timestamps
+        ? this.formatTranscript(
+            result.segments.map((segment) => ({
+              text: segment.text,
+              start: segment.start,
+              duration: Math.max(0, segment.end - segment.start),
+            })),
+            true,
+          )
+        : result.transcript;
+
+      const output = [
+        `Audio Transcription Complete`,
+        ``,
+        `Engine: ${result.engine === "openai" ? "OpenAI Whisper API" : "Local Whisper"}`,
+        `Language: ${result.language}`,
+        `Duration: ${formattedDuration}`,
+        ``,
+        transcriptText,
+      ].join("\n");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: output,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(
+        `Failed to transcribe audio: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

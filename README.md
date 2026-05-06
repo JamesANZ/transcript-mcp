@@ -2,7 +2,7 @@
 
 [glama](https://glama.ai/mcp/servers/JamesANZ/video-toolkit-mcp)
 
-A Model Context Protocol (MCP) server that provides comprehensive video tools: transcript retrieval, video downloading, and automatic subtitle generation using AI speech-to-text. Works with YouTube, Bilibili, Vimeo, and any platform supported by yt-dlp.
+A Model Context Protocol (MCP) server that provides comprehensive video tools: transcript retrieval, video downloading, automatic subtitle generation, and direct audio transcription. Works with YouTube, Bilibili, Vimeo, and any platform supported by yt-dlp.
 
 ## Features
 
@@ -10,6 +10,7 @@ A Model Context Protocol (MCP) server that provides comprehensive video tools: t
 - **Video Transcripts**: Extract existing transcripts/captions from videos
 - **Video Downloads**: Download videos to local storage in various formats and qualities
 - **Auto Subtitle Generation**: Generate subtitles using OpenAI Whisper API or local Whisper
+- **Client Audio Transcription**: Transcribe audio supplied via file paths, base64 payloads, or resource URIs
 - **Multiple URL Formats**: Support for various URL formats from different platforms
 - **Timestamp Support**: Include or exclude timestamps in transcript output
 - **Language Selection**: Request transcripts or generate subtitles in specific languages
@@ -23,6 +24,7 @@ A Model Context Protocol (MCP) server that provides comprehensive video tools: t
 | `download-video`            | Download videos to local storage                   |
 | `list-downloads`            | List downloaded video files                        |
 | `generate-subtitles`        | Generate subtitles using AI speech-to-text         |
+| `transcribe-audio`          | Transcribe client-provided audio                   |
 
 ## Prerequisites
 
@@ -126,6 +128,7 @@ Add the MCP server to your configuration file:
 | `WHISPER_MODEL_PATH`           | Path to whisper model (for local whisper)              | Auto-download                |
 | `YT_DLP_PATH`                  | Path to yt-dlp binary                                  | `yt-dlp`                     |
 | `FFMPEG_PATH`                  | Path to ffmpeg binary                                  | `ffmpeg`                     |
+| `FFPROBE_PATH`                 | Path to ffprobe binary                                 | Derived from `FFMPEG_PATH`   |
 | `DEBUG`                        | Enable debug logging                                   | `0`                          |
 
 ## Usage
@@ -209,6 +212,31 @@ Generate subtitles for a local video file using AI speech-to-text.
 Generate subtitles for /path/to/video.mp4
 ```
 
+### 6. transcribe-audio
+
+Transcribe audio sent by the MCP client. Supports multiple input contracts and normalizes audio to a stable format before transcription.
+
+**Parameters:**
+
+- One required input source (exactly one):
+  - `audio_path`: Absolute path to a local audio file
+  - `audio_base64`: Base64-encoded audio payload
+  - `audio_resource_uri`: URI using `file://` or `data:...;base64,...`
+- `filename` (optional): Filename used for base64/resource inputs
+- `engine` (optional): `openai`, `local`, or `auto` (default: `auto`)
+- `language` (optional): Language hint for transcription
+- `include_timestamps` (optional): Include timestamps in output (default: true)
+
+**Examples:**
+
+```
+Transcribe this audio file: /path/to/interview.m4a
+```
+
+```
+Transcribe this base64 audio payload using local engine
+```
+
 ## Subtitle Generation Engines
 
 ### OpenAI Whisper API
@@ -228,6 +256,8 @@ The tool auto-detects which engine to use:
 1. If `OPENAI_API_KEY` is set, uses OpenAI Whisper
 2. If local whisper is installed, uses local whisper
 3. Returns an error if neither is available
+
+For `transcribe-audio`, `auto` uses OpenAI first and falls back to local whisper when local whisper is available.
 
 ## Example Workflows
 
@@ -308,6 +338,12 @@ pip install yt-dlp
 ```
 
 ### "ffmpeg is not installed"
+
+```bash
+brew install ffmpeg
+```
+
+### "ffprobe is not installed"
 
 ```bash
 brew install ffmpeg
