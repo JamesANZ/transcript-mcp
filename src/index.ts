@@ -6,14 +6,22 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { readFile } from "fs/promises";
+import { readFile, mkdtemp, writeFile, rm } from "fs/promises";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { tmpdir } from "os";
 import { TranscriptFetcher } from "./transcript-fetcher.js";
 import { validateUrl } from "./url-detector.js";
 import { getConfig, Config } from "./config.js";
 import { VideoDownloader } from "./video-downloader.js";
-import { SubtitleGenerator, WhisperEngineType } from "./subtitle-generator.js";
+import {
+  SubtitleGenerator,
+  WhisperEngineType,
+  StructuredTranscriptionResult,
+  TranscribeAsyncQueued,
+} from "./subtitle-generator.js";
+import { TranscribeJobManager } from "./transcribe-job-manager.js";
+import { UploadSessionManager } from "./upload-session-manager.js";
 
 // Get package.json path for version info
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +41,8 @@ class TranscriptMCPServer {
   private fetcher: TranscriptFetcher;
   private downloader: VideoDownloader;
   private subtitleGenerator: SubtitleGenerator;
+  private transcribeJobManager: TranscribeJobManager;
+  private uploadSessionManager: UploadSessionManager;
   private config: Config;
 
   constructor() {
@@ -61,6 +71,8 @@ class TranscriptMCPServer {
 
     // Initialize subtitle generator
     this.subtitleGenerator = new SubtitleGenerator(this.config);
+    this.transcribeJobManager = new TranscribeJobManager(this.subtitleGenerator);
+    this.uploadSessionManager = new UploadSessionManager();
 
     this.setupHandlers();
     this.setupErrorHandling();
@@ -219,7 +231,7 @@ class TranscriptMCPServer {
         {
           name: "transcribe-audio",
           description:
-            "Transcribe client-provided audio using OpenAI Whisper or local whisper with automatic format normalization.",
+            "Transcribes audio via Whisper. Preferred: audio_url (most token-efficient; server fetches bytes). audio_base64 is for small clips only (<= ~60KB raw per call). audio_path only works when the MCP host shares a filesystem with the caller (often false on Claude.ai / Claude Code). For larger payloads in sandboxed environments, use transcribe_upload_start / transcribe_upload_append / transcribe_upload_finalize. Server re-encodes to Opus 16kHz mono 16kbps before Whisper unless skip_compression=true. Long audio (>5min) or async=true returns a job_id; poll transcribe_get_job.",
           inputSchema: {
             $schema: "https://json-schema.org/draft/2020-12/schema",
             type: "object",
@@ -227,22 +239,32 @@ class TranscriptMCPServer {
               audio_path: {
                 type: "string",
                 description:
-                  "Absolute path to a local audio file on the MCP host.",
+                  "Absolute path to a local audio file on the MCP host (often unusable from sandboxed clients).",
               },
               audio_base64: {
                 type: "string",
                 description:
-                  "Base64-encoded audio payload supplied by the MCP client.",
+                  "Base64-encoded audio payload (single-call max ~60KB raw; use chunked upload for larger).",
               },
               audio_resource_uri: {
                 type: "string",
                 description:
                   "Audio resource URI, supported schemes: file:// and data:...;base64,...",
               },
+              audio_url: {
+                type: "string",
+                description:
+                  "HTTP(S) URL the server will fetch (requires TRANSCRIPT_MCP_URL_ALLOWLIST).",
+              },
               filename: {
                 type: "string",
                 description:
-                  "Optional filename used when materializing base64/resource inputs.",
+                  "Optional filename hint (used when magic-byte detection is inconclusive).",
+              },
+              skip_compression: {
+                type: "boolean",
+                description:
+                  "If true, skip Opus 16kbps recompression (caller already optimized). Default: false",
               },
               engine: {
                 type: "string",
@@ -258,14 +280,105 @@ class TranscriptMCPServer {
               include_timestamps: {
                 type: "boolean",
                 description:
-                  "Include [MM:SS] timestamps in transcript text output. Default: true",
+                  "When as_text=true, include [MM:SS] timestamps in the plain text output. Default: true",
+              },
+              as_text: {
+                type: "boolean",
+                description:
+                  "If true, return only the joined transcript string. If false, return structured JSON. Default: false",
+              },
+              async: {
+                type: "boolean",
+                description:
+                  "If true, always enqueue an async job (returns job_id). Default: false",
               },
             },
             oneOf: [
               { required: ["audio_path"] },
               { required: ["audio_base64"] },
               { required: ["audio_resource_uri"] },
+              { required: ["audio_url"] },
             ],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "transcribe_upload_start",
+          description:
+            "Begin a chunked audio upload for large payloads. Returns upload_id and max_chunk_bytes (~60KB).",
+          inputSchema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {
+              filename: { type: "string", description: "Original filename hint" },
+              expected_chunks: {
+                type: "integer",
+                minimum: 1,
+                description: "Total number of base64 chunks you will upload",
+              },
+              language: { type: "string" },
+              include_timestamps: { type: "boolean" },
+            },
+            required: ["filename", "expected_chunks"],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "transcribe_upload_append",
+          description: "Append one base64 chunk to an upload session.",
+          inputSchema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {
+              upload_id: { type: "string" },
+              chunk_index: { type: "integer", minimum: 0 },
+              audio_base64: { type: "string" },
+            },
+            required: ["upload_id", "chunk_index", "audio_base64"],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "transcribe_upload_finalize",
+          description:
+            "Finalize a chunked upload, run compression + Whisper, return structured JSON (or text with as_text).",
+          inputSchema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {
+              upload_id: { type: "string" },
+              skip_compression: { type: "boolean" },
+              engine: { type: "string", enum: ["openai", "local", "auto"] },
+              language: { type: "string" },
+              as_text: { type: "boolean" },
+              async: { type: "boolean" },
+            },
+            required: ["upload_id"],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "transcribe_get_job",
+          description: "Poll an async transcription job created by transcribe-audio.",
+          inputSchema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {
+              job_id: { type: "string" },
+              as_text: { type: "boolean" },
+            },
+            required: ["job_id"],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "transcribe_cancel_job",
+          description: "Cancel an async transcription job (best-effort).",
+          inputSchema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: { job_id: { type: "string" } },
+            required: ["job_id"],
             additionalProperties: false,
           },
         },
@@ -321,12 +434,50 @@ class TranscriptMCPServer {
                 audio_path?: string;
                 audio_base64?: string;
                 audio_resource_uri?: string;
+                audio_url?: string;
                 filename?: string;
                 engine?: string;
                 language?: string;
                 include_timestamps?: boolean;
+                skip_compression?: boolean;
+                as_text?: boolean;
+                async?: boolean;
               },
             );
+          case "transcribe_upload_start":
+            return await this.handleTranscribeUploadStart(
+              args as {
+                filename: string;
+                expected_chunks: number;
+                language?: string;
+                include_timestamps?: boolean;
+              },
+            );
+          case "transcribe_upload_append":
+            return await this.handleTranscribeUploadAppend(
+              args as {
+                upload_id: string;
+                chunk_index: number;
+                audio_base64: string;
+              },
+            );
+          case "transcribe_upload_finalize":
+            return await this.handleTranscribeUploadFinalize(
+              args as {
+                upload_id: string;
+                skip_compression?: boolean;
+                engine?: string;
+                language?: string;
+                as_text?: boolean;
+                async?: boolean;
+              },
+            );
+          case "transcribe_get_job":
+            return await this.handleTranscribeGetJob(
+              args as { job_id: string; as_text?: boolean },
+            );
+          case "transcribe_cancel_job":
+            return await this.handleTranscribeCancelJob(args as { job_id: string });
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -638,14 +789,42 @@ class TranscriptMCPServer {
     }
   }
 
+  private formatTranscriptionPayload(
+    payload: StructuredTranscriptionResult | TranscribeAsyncQueued,
+    asText: boolean | undefined,
+    includeTimestamps: boolean | undefined,
+  ): string {
+    if ("job_id" in payload) {
+      return JSON.stringify(payload, null, 2);
+    }
+    if (asText) {
+      if (includeTimestamps) {
+        return this.formatTranscript(
+          payload.segments.map((segment) => ({
+            text: segment.text,
+            start: segment.start,
+            duration: Math.max(0, segment.end - segment.start),
+          })),
+          true,
+        );
+      }
+      return payload.text;
+    }
+    return JSON.stringify(payload, null, 2);
+  }
+
   private async handleTranscribeAudio(args: {
     audio_path?: string;
     audio_base64?: string;
     audio_resource_uri?: string;
+    audio_url?: string;
     filename?: string;
     engine?: string;
     language?: string;
     include_timestamps?: boolean;
+    skip_compression?: boolean;
+    as_text?: boolean;
+    async?: boolean;
   }): Promise<{
     content: Array<{ type: string; text: string }>;
     isError?: boolean;
@@ -654,58 +833,53 @@ class TranscriptMCPServer {
       audio_path,
       audio_base64,
       audio_resource_uri,
+      audio_url,
       filename,
       engine,
       language,
       include_timestamps = true,
+      skip_compression = false,
+      as_text = false,
+      async: asyncFlag = false,
     } = args;
 
     try {
-      const providedInputs = [audio_path, audio_base64, audio_resource_uri].filter(
-        Boolean,
-      );
+      const providedInputs = [
+        audio_path,
+        audio_base64,
+        audio_resource_uri,
+        audio_url,
+      ].filter(Boolean);
       if (providedInputs.length !== 1) {
         throw new Error(
-          "Provide exactly one of: audio_path, audio_base64, or audio_resource_uri.",
+          "Provide exactly one of: audio_path, audio_base64, audio_resource_uri, or audio_url.",
         );
       }
 
-      const result = await this.subtitleGenerator.transcribeAudio({
-        audioPath: audio_path,
-        audioBase64: audio_base64,
-        audioResourceUri: audio_resource_uri,
-        filename,
-        engine: (engine as WhisperEngineType | "auto" | undefined) || "auto",
-        language,
-      });
-
-      const formattedDuration = VideoDownloader.formatDuration(result.duration);
-      const transcriptText = include_timestamps
-        ? this.formatTranscript(
-            result.segments.map((segment) => ({
-              text: segment.text,
-              start: segment.start,
-              duration: Math.max(0, segment.end - segment.start),
-            })),
-            true,
-          )
-        : result.transcript;
-
-      const output = [
-        `Audio Transcription Complete`,
-        ``,
-        `Engine: ${result.engine === "openai" ? "OpenAI Whisper API" : "Local Whisper"}`,
-        `Language: ${result.language}`,
-        `Duration: ${formattedDuration}`,
-        ``,
-        transcriptText,
-      ].join("\n");
+      const result = await this.subtitleGenerator.transcribeAudioStructured(
+        {
+          audioPath: audio_path,
+          audioBase64: audio_base64,
+          audioResourceUri: audio_resource_uri,
+          audioUrl: audio_url,
+          filename,
+          engine: (engine as WhisperEngineType | "auto" | undefined) || "auto",
+          language,
+          skipCompression: skip_compression,
+          async: asyncFlag,
+        },
+        this.transcribeJobManager,
+      );
 
       return {
         content: [
           {
             type: "text",
-            text: output,
+            text: this.formatTranscriptionPayload(
+              result,
+              as_text,
+              include_timestamps,
+            ),
           },
         ],
       };
@@ -714,6 +888,143 @@ class TranscriptMCPServer {
         `Failed to transcribe audio: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  private async handleTranscribeUploadStart(args: {
+    filename: string;
+    expected_chunks: number;
+    language?: string;
+    include_timestamps?: boolean;
+  }): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const { uploadId, maxChunkBytes } = await this.uploadSessionManager.createSession({
+      filename: args.filename,
+      expectedChunks: args.expected_chunks,
+      language: args.language,
+      includeTimestamps: args.include_timestamps,
+    });
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            { upload_id: uploadId, max_chunk_bytes: maxChunkBytes },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handleTranscribeUploadAppend(args: {
+    upload_id: string;
+    chunk_index: number;
+    audio_base64: string;
+  }): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const progress = await this.uploadSessionManager.appendChunk(
+      args.upload_id,
+      args.chunk_index,
+      args.audio_base64,
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(progress, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleTranscribeUploadFinalize(args: {
+    upload_id: string;
+    skip_compression?: boolean;
+    engine?: string;
+    language?: string;
+    as_text?: boolean;
+    async?: boolean;
+  }): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const session = this.uploadSessionManager.getSession(args.upload_id);
+    if (!session) {
+      throw new Error(`Unknown upload_id: ${args.upload_id}`);
+    }
+
+    let tempDir: string | undefined;
+    try {
+      const buffer = await this.uploadSessionManager.readConcatenated(args.upload_id);
+      tempDir = await mkdtemp(join(tmpdir(), "transcribe-upload-final-"));
+      const filePath = join(tempDir, session.filename);
+      await writeFile(filePath, buffer);
+
+      const result = await this.subtitleGenerator.transcribeAudioFromFilePath(
+        filePath,
+        {
+          language: args.language ?? session.language,
+          engine: (args.engine as WhisperEngineType | "auto" | undefined) || "auto",
+          skipCompression: Boolean(args.skip_compression),
+          filenameHint: session.filename,
+          async: Boolean(args.async),
+        },
+        this.transcribeJobManager,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: this.formatTranscriptionPayload(
+              result,
+              args.as_text,
+              session.includeTimestamps,
+            ),
+          },
+        ],
+      };
+    } finally {
+      await this.uploadSessionManager.finalizeAndRemove(args.upload_id);
+      if (tempDir) {
+        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  }
+
+  private async handleTranscribeGetJob(args: {
+    job_id: string;
+    as_text?: boolean;
+  }): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const job = this.transcribeJobManager.getJob(args.job_id);
+    if (job.status === "completed" && job.result) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: this.formatTranscriptionPayload(job.result, args.as_text, false),
+          },
+        ],
+      };
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(job, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleTranscribeCancelJob(args: {
+    job_id: string;
+  }): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const ok = this.transcribeJobManager.cancelJob(args.job_id);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ ok }, null, 2),
+        },
+      ],
+    };
   }
 
   async start(): Promise<void> {

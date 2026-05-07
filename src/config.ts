@@ -21,6 +21,8 @@ export interface Config {
   ytDlpPath: string;
   ffmpegPath: string;
   ffprobePath: string;
+  /** Comma-separated host patterns for server-side audio_url fetches (empty = disallow all). */
+  transcriptMcpUrlAllowlist: string;
   debug: boolean;
 }
 
@@ -42,6 +44,8 @@ export function getConfig(): Config {
     ffprobePath:
       process.env.FFPROBE_PATH ||
       (process.env.FFMPEG_PATH || "ffmpeg").replace("ffmpeg", "ffprobe"),
+    transcriptMcpUrlAllowlist:
+      process.env.TRANSCRIPT_MCP_URL_ALLOWLIST || "",
     debug: process.env.DEBUG === "1",
   };
 }

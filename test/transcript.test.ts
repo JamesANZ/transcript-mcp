@@ -8,7 +8,7 @@ import {
   validateUrl,
 } from "../src/url-detector.js";
 import { TranscriptParser } from "../src/parser.js";
-import { InvalidUrlError, TranscriptParseError } from "../src/errors.js";
+import { InvalidUrlError } from "../src/errors.js";
 
 describe("URL Detector", () => {
   describe("detectPlatform", () => {
@@ -206,13 +206,12 @@ This is a test
   });
 
   describe("error handling", () => {
-    it("should throw on invalid format", () => {
-      expect(() => {
-        parser.parse(
-          "invalid content that doesn't match any format",
-          "https://example.com/video",
-        );
-      }).toThrow(TranscriptParseError);
+    it("should return an empty list when no cues can be parsed", () => {
+      const result = parser.parse(
+        "invalid content that doesn't match any format",
+        "https://example.com/video",
+      );
+      expect(result).toEqual([]);
     });
   });
 

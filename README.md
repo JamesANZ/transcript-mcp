@@ -10,7 +10,7 @@ A Model Context Protocol (MCP) server that provides comprehensive video tools: t
 - **Video Transcripts**: Extract existing transcripts/captions from videos
 - **Video Downloads**: Download videos to local storage in various formats and qualities
 - **Auto Subtitle Generation**: Generate subtitles using OpenAI Whisper API or local Whisper
-- **Client Audio Transcription**: Transcribe audio supplied via file paths, base64 payloads, or resource URIs
+- **Client Audio Transcription**: `audio_url` fetch (allowlisted), small `audio_base64`, chunked uploads, optional async jobs, server-side Opus compression, structured JSON results
 - **Multiple URL Formats**: Support for various URL formats from different platforms
 - **Timestamp Support**: Include or exclude timestamps in transcript output
 - **Language Selection**: Request transcripts or generate subtitles in specific languages
@@ -24,13 +24,18 @@ A Model Context Protocol (MCP) server that provides comprehensive video tools: t
 | `download-video`            | Download videos to local storage                   |
 | `list-downloads`            | List downloaded video files                        |
 | `generate-subtitles`        | Generate subtitles using AI speech-to-text         |
-| `transcribe-audio`          | Transcribe client-provided audio                   |
+| `transcribe-audio`          | Transcribe client-provided audio (URL / base64 / path / resource URI) |
+| `transcribe_upload_start`   | Start chunked upload for large audio payloads    |
+| `transcribe_upload_append`  | Append one base64 chunk to an upload session     |
+| `transcribe_upload_finalize` | Finish upload and run transcription             |
+| `transcribe_get_job`        | Poll async transcription jobs                    |
+| `transcribe_cancel_job`     | Cancel an async transcription job                |
 
 ## Prerequisites
 
 - **Node.js** >= 16.0.0
 - **yt-dlp** - Required for transcript fetching and video downloads
-- **ffmpeg** - Required for subtitle generation (audio extraction)
+- **ffmpeg** - Required for subtitle generation, audio normalization, Opus compression, and silence-aware splitting (install a build with `libopus`)
 
 ### Installing Dependencies
 
@@ -129,6 +134,7 @@ Add the MCP server to your configuration file:
 | `YT_DLP_PATH`                  | Path to yt-dlp binary                                  | `yt-dlp`                     |
 | `FFMPEG_PATH`                  | Path to ffmpeg binary                                  | `ffmpeg`                     |
 | `FFPROBE_PATH`                 | Path to ffprobe binary                                 | Derived from `FFMPEG_PATH`   |
+| `TRANSCRIPT_MCP_URL_ALLOWLIST` | Comma-separated host patterns allowed for `audio_url` (e.g. `*.amazonaws.com,localhost`). Empty disables all `audio_url` fetches | empty |
 | `DEBUG`                        | Enable debug logging                                   | `0`                          |
 
 ## Usage
@@ -214,28 +220,40 @@ Generate subtitles for /path/to/video.mp4
 
 ### 6. transcribe-audio
 
-Transcribe audio sent by the MCP client. Supports multiple input contracts and normalizes audio to a stable format before transcription.
+Transcribes audio via Whisper. Prefer **`audio_url`** (server fetches bytes; configure `TRANSCRIPT_MCP_URL_ALLOWLIST`). Use **`audio_base64`** only for small clips (about **60KB raw** per call; larger payloads should use chunked upload or a URL). **`audio_path` / `file://`** only work when the MCP host shares a filesystem with the caller (often false in sandboxed clients).
 
-**Parameters:**
+By default the server **re-encodes to Opus 16 kHz mono 16 kbps** before Whisper. Set **`skip_compression: true`** if you already optimized the file.
 
-- One required input source (exactly one):
-  - `audio_path`: Absolute path to a local audio file
-  - `audio_base64`: Base64-encoded audio payload
-  - `audio_resource_uri`: URI using `file://` or `data:...;base64,...`
-- `filename` (optional): Filename used for base64/resource inputs
+Audio longer than **5 minutes** (or when **`async: true`**) returns **`{ job_id, status: "processing" }`**; poll **`transcribe_get_job`**.
+
+**Parameters (one required input):**
+
+- `audio_url`, `audio_path`, `audio_base64`, or `audio_resource_uri` (`file://` / `data:...;base64,...`)
+- `filename` (optional): Hint when magic-byte detection is inconclusive
+- `skip_compression` (optional): Skip Opus recompression (default: false)
 - `engine` (optional): `openai`, `local`, or `auto` (default: `auto`)
 - `language` (optional): Language hint for transcription
-- `include_timestamps` (optional): Include timestamps in output (default: true)
+- `include_timestamps` (optional): When `as_text` is true, include `[MM:SS]` lines (default: true)
+- `as_text` (optional): If true, return plain transcript text; if false, return structured JSON (default: false)
+- `async` (optional): Force async job (default: false)
 
 **Examples:**
 
 ```
-Transcribe this audio file: /path/to/interview.m4a
+Transcribe this presigned URL (after allowlisting the host): audio_url=...
 ```
 
 ```
-Transcribe this base64 audio payload using local engine
+Transcribe this audio file on the MCP host: /path/to/interview.m4a
 ```
+
+### 7. transcribe_upload_* (chunked upload)
+
+For large files, split the raw bytes into base64 chunks of at most **`max_chunk_bytes`** (~60KB) from `transcribe_upload_start`, call **`transcribe_upload_append`** for each index, then **`transcribe_upload_finalize`**. Abandoned uploads are garbage-collected after about an hour.
+
+### 8. transcribe_get_job / transcribe_cancel_job
+
+Poll or cancel async jobs created by **`transcribe-audio`** (long audio or `async: true`).
 
 ## Subtitle Generation Engines
 
