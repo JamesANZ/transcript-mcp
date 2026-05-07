@@ -37,7 +37,11 @@ export class UploadSessionManager {
     maxChunkBytes?: number;
     language?: string;
     includeTimestamps?: boolean;
-  }): Promise<{ session: UploadSession; uploadId: string; maxChunkBytes: number }> {
+  }): Promise<{
+    session: UploadSession;
+    uploadId: string;
+    maxChunkBytes: number;
+  }> {
     const maxChunkBytes = params.maxChunkBytes ?? DEFAULT_MAX_CHUNK_BYTES;
     const uploadId = randomUUID();
     const dir = join(tmpdir(), `transcribe-upload-${uploadId}`);
@@ -87,7 +91,10 @@ export class UploadSessionManager {
       );
     }
 
-    const chunkPath = join(session.dir, `chunk-${String(chunkIndex).padStart(6, "0")}.bin`);
+    const chunkPath = join(
+      session.dir,
+      `chunk-${String(chunkIndex).padStart(6, "0")}.bin`,
+    );
     await writeFile(chunkPath, bytes);
     session.received.add(chunkIndex);
 
@@ -110,7 +117,10 @@ export class UploadSessionManager {
 
     const parts: Buffer[] = [];
     for (let i = 0; i < session.expectedChunks; i++) {
-      const chunkPath = join(session.dir, `chunk-${String(i).padStart(6, "0")}.bin`);
+      const chunkPath = join(
+        session.dir,
+        `chunk-${String(i).padStart(6, "0")}.bin`,
+      );
       parts.push(await readFile(chunkPath));
     }
     return Buffer.concat(parts);

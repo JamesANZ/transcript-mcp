@@ -2,7 +2,10 @@
  * Audio ingestion / transcription helper tests (no OpenAI calls).
  */
 
-import { detectAudioFormatFromBuffer, bytesToHex16 } from "../src/audio-format.js";
+import {
+  detectAudioFormatFromBuffer,
+  bytesToHex16,
+} from "../src/audio-format.js";
 import { fetchAudioFromUrl } from "../src/audio-url-fetch.js";
 import { getConfig } from "../src/config.js";
 import { UploadSessionManager } from "../src/upload-session-manager.js";
@@ -32,24 +35,26 @@ describe("audio_url allowlist", () => {
   it("blocks fetches when allowlist is empty", async () => {
     const cfg = getConfig();
     cfg.transcriptMcpUrlAllowlist = "";
-    await expect(fetchAudioFromUrl("https://example.com/a.mp3", cfg)).rejects.toThrow(
-      /TRANSCRIPT_MCP_URL_ALLOWLIST is empty/i,
-    );
+    await expect(
+      fetchAudioFromUrl("https://example.com/a.mp3", cfg),
+    ).rejects.toThrow(/TRANSCRIPT_MCP_URL_ALLOWLIST is empty/i);
   });
 
   it("blocks non-matching hosts", async () => {
     const cfg = getConfig();
     cfg.transcriptMcpUrlAllowlist = "localhost";
-    await expect(fetchAudioFromUrl("https://evil.com/a.mp3", cfg)).rejects.toThrow(
-      /not allowed/i,
-    );
+    await expect(
+      fetchAudioFromUrl("https://evil.com/a.mp3", cfg),
+    ).rejects.toThrow(/not allowed/i);
   });
 });
 
 describe("single-call base64 size limit", () => {
   it("rejects payloads larger than TRANSCRIBE_SINGLE_CALL_MAX_BYTES", async () => {
     const gen = new SubtitleGenerator(getConfig());
-    const big = Buffer.alloc(TRANSCRIBE_SINGLE_CALL_MAX_BYTES + 1, 7).toString("base64");
+    const big = Buffer.alloc(TRANSCRIBE_SINGLE_CALL_MAX_BYTES + 1, 7).toString(
+      "base64",
+    );
     await expect(
       gen.transcribeAudioStructured(
         {
@@ -82,9 +87,9 @@ describe("chunked upload session", () => {
       expectedChunks: 2,
     });
     const tooBig = Buffer.alloc(maxChunkBytes + 1, 1).toString("base64");
-    await expect(
-      mgr.appendChunk(uploadId, 0, tooBig),
-    ).rejects.toThrow(/max_chunk_bytes/i);
+    await expect(mgr.appendChunk(uploadId, 0, tooBig)).rejects.toThrow(
+      /max_chunk_bytes/i,
+    );
     await mgr.finalizeAndRemove(uploadId);
   });
 
@@ -94,16 +99,8 @@ describe("chunked upload session", () => {
       filename: "c.bin",
       expectedChunks: 2,
     });
-    await mgr.appendChunk(
-      uploadId,
-      1,
-      Buffer.from("B").toString("base64"),
-    );
-    await mgr.appendChunk(
-      uploadId,
-      0,
-      Buffer.from("A").toString("base64"),
-    );
+    await mgr.appendChunk(uploadId, 1, Buffer.from("B").toString("base64"));
+    await mgr.appendChunk(uploadId, 0, Buffer.from("A").toString("base64"));
     const out = await mgr.readConcatenated(uploadId);
     expect(out.toString("utf8")).toBe("AB");
     await mgr.finalizeAndRemove(uploadId);

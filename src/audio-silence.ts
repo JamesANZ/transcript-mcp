@@ -24,7 +24,10 @@ export async function buildTranscriptionWindows(
   return capped.length > 0 ? capped : [{ start: 0, end: duration }];
 }
 
-async function probeDuration(ffprobePath: string, file: string): Promise<number> {
+async function probeDuration(
+  ffprobePath: string,
+  file: string,
+): Promise<number> {
   try {
     const cmd = `${ffprobePath} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${file}"`;
     const { stdout } = await execAsync(cmd);

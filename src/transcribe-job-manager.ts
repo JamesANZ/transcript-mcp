@@ -54,7 +54,9 @@ export class TranscribeJobManager {
 
     if (job.cancelled) {
       job.status = "cancelled";
-      await rm(job.ctx.tempDir, { recursive: true, force: true }).catch(() => {});
+      await rm(job.ctx.tempDir, { recursive: true, force: true }).catch(
+        () => {},
+      );
       return;
     }
 
@@ -72,7 +74,9 @@ export class TranscribeJobManager {
       job.status = "failed";
       job.error = e instanceof Error ? e.message : String(e);
     } finally {
-      await rm(job.ctx.tempDir, { recursive: true, force: true }).catch(() => {});
+      await rm(job.ctx.tempDir, { recursive: true, force: true }).catch(
+        () => {},
+      );
     }
   }
 

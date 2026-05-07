@@ -1,11 +1,11 @@
 {
-  "name": "video-toolkit-mcp",
+  "name": "transcript-mcp",
   "version": "1.1.0",
   "description": "MCP server for video transcripts, downloading videos, and auto-generating subtitles from multiple platforms",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "video-toolkit-mcp": "./dist/index.js"
+    "transcript-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

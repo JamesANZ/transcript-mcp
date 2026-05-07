@@ -1,5 +1,5 @@
 /**
- * Centralized configuration management for Video Toolkit MCP
+ * Centralized configuration management for transcript-mcp
  */
 
 import { homedir } from "os";
@@ -26,16 +26,21 @@ export interface Config {
   debug: boolean;
 }
 
-const DEFAULT_STORAGE_DIR = join(homedir(), ".video-toolkit", "downloads");
+const DEFAULT_STORAGE_DIR = join(homedir(), ".transcript-mcp", "downloads");
 
 /**
  * Get configuration from environment variables with sensible defaults
  */
 export function getConfig(): Config {
   return {
-    storageDir: process.env.VIDEO_TOOLKIT_STORAGE_DIR || DEFAULT_STORAGE_DIR,
+    storageDir:
+      process.env.TRANSCRIPT_MCP_STORAGE_DIR ||
+      process.env.VIDEO_TOOLKIT_STORAGE_DIR ||
+      DEFAULT_STORAGE_DIR,
     whisperEngine:
-      (process.env.VIDEO_TOOLKIT_WHISPER_ENGINE as WhisperEngine) || "auto",
+      (process.env.TRANSCRIPT_MCP_WHISPER_ENGINE as WhisperEngine) ||
+      (process.env.VIDEO_TOOLKIT_WHISPER_ENGINE as WhisperEngine) ||
+      "auto",
     openaiApiKey: process.env.OPENAI_API_KEY,
     whisperBinaryPath: process.env.WHISPER_BINARY_PATH || "whisper",
     whisperModelPath: process.env.WHISPER_MODEL_PATH,
@@ -44,8 +49,7 @@ export function getConfig(): Config {
     ffprobePath:
       process.env.FFPROBE_PATH ||
       (process.env.FFMPEG_PATH || "ffmpeg").replace("ffmpeg", "ffprobe"),
-    transcriptMcpUrlAllowlist:
-      process.env.TRANSCRIPT_MCP_URL_ALLOWLIST || "",
+    transcriptMcpUrlAllowlist: process.env.TRANSCRIPT_MCP_URL_ALLOWLIST || "",
     debug: process.env.DEBUG === "1",
   };
 }

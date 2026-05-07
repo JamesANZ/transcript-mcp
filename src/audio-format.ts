@@ -40,7 +40,8 @@ function sniffMagic(buf: Buffer): DetectedAudioFormat {
   if (buf.length >= 2) {
     const b0 = buf[0];
     const b1 = buf[1];
-    if (b0 === 0xff && (b1 === 0xfb || b1 === 0xf3 || b1 === 0xf2)) return "mp3";
+    if (b0 === 0xff && (b1 === 0xfb || b1 === 0xf3 || b1 === 0xf2))
+      return "mp3";
   }
   if (buf.length >= 12) {
     const riff = buf.subarray(0, 4).toString("ascii");

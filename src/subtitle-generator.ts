@@ -264,7 +264,7 @@ export class SubtitleGenerator {
     },
     jobQueue?: TranscribeJobManager,
   ): Promise<StructuredTranscriptionResult | TranscribeAsyncQueued> {
-    const tempDir = await mkdtemp(join(tmpdir(), "video-toolkit-audio-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "transcript-mcp-audio-"));
     const materialized = join(tempDir, basename(absolutePath));
     await copyFile(absolutePath, materialized);
     return await this.runStructuredPipelineInDir(
@@ -287,7 +287,7 @@ export class SubtitleGenerator {
     options: AudioTranscriptionOptions,
     jobQueue?: TranscribeJobManager,
   ): Promise<StructuredTranscriptionResult | TranscribeAsyncQueued> {
-    const tempDir = await mkdtemp(join(tmpdir(), "video-toolkit-audio-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "transcript-mcp-audio-"));
     try {
       const materialized = await this.materializeAudioInput(options, tempDir);
       return await this.runStructuredPipelineInDir(
@@ -418,9 +418,8 @@ export class SubtitleGenerator {
     engine?: WhisperEngineType | "auto";
     durationHint: number;
   }): Promise<StructuredTranscriptionResult> {
-    const { selectedEngine, fallbackEngine } = await this.resolveTranscriptionEngines(
-      params.engine,
-    );
+    const { selectedEngine, fallbackEngine } =
+      await this.resolveTranscriptionEngines(params.engine);
     const language = params.language;
     let selectedResult:
       | { segments: TranscriptionSegment[]; language: string }
@@ -432,7 +431,10 @@ export class SubtitleGenerator {
       selectedResult =
         selectedEngine === "openai"
           ? await this.transcribeWithOpenAI(params.whisperInputPath, language)
-          : await this.transcribeWithLocalWhisper(params.whisperInputPath, language);
+          : await this.transcribeWithLocalWhisper(
+              params.whisperInputPath,
+              language,
+            );
     } catch (error) {
       primaryError = error instanceof Error ? error.message : String(error);
     }
@@ -444,13 +446,17 @@ export class SubtitleGenerator {
       selectedResult =
         fallbackEngine === "openai"
           ? await this.transcribeWithOpenAI(params.whisperInputPath, language)
-          : await this.transcribeWithLocalWhisper(params.whisperInputPath, language);
+          : await this.transcribeWithLocalWhisper(
+              params.whisperInputPath,
+              language,
+            );
       usedEngine = fallbackEngine;
     }
 
     if (!selectedResult) {
       throw new Error(
-        primaryError || "Transcription failed and no fallback engine available.",
+        primaryError ||
+          "Transcription failed and no fallback engine available.",
       );
     }
 
@@ -491,9 +497,8 @@ export class SubtitleGenerator {
       params.workWavPath,
     );
 
-    const { selectedEngine, fallbackEngine } = await this.resolveTranscriptionEngines(
-      params.engine,
-    );
+    const { selectedEngine, fallbackEngine } =
+      await this.resolveTranscriptionEngines(params.engine);
 
     const runEngine = async (
       engine: WhisperEngineType,
@@ -534,8 +539,14 @@ export class SubtitleGenerator {
         try {
           result =
             engine === "openai"
-              ? await this.transcribeWithOpenAI(whisperInput.path, params.language)
-              : await this.transcribeWithLocalWhisper(whisperInput.path, params.language);
+              ? await this.transcribeWithOpenAI(
+                  whisperInput.path,
+                  params.language,
+                )
+              : await this.transcribeWithLocalWhisper(
+                  whisperInput.path,
+                  params.language,
+                );
         } finally {
           await unlink(segWav).catch(() => {});
           if (whisperInput.path !== segWav) {
@@ -559,7 +570,10 @@ export class SubtitleGenerator {
         merged.push(...(pieces[i] || []));
       }
 
-      const compressedTotal = compressedPerWindow.reduce((a, b) => a + (b || 0), 0);
+      const compressedTotal = compressedPerWindow.reduce(
+        (a, b) => a + (b || 0),
+        0,
+      );
       return { segments: merged, language: detectedLang, compressedTotal };
     };
 
@@ -608,7 +622,10 @@ export class SubtitleGenerator {
     };
   }
 
-  private async compressToOpus(inputPath: string, outputPath: string): Promise<void> {
+  private async compressToOpus(
+    inputPath: string,
+    outputPath: string,
+  ): Promise<void> {
     const command = [
       this.config.ffmpegPath,
       "-y",
@@ -703,7 +720,8 @@ export class SubtitleGenerator {
 
     if (options.audioUrl) {
       const fetched = await fetchAudioFromUrl(options.audioUrl, this.config);
-      const filename = options.filename || fetched.filenameHint || "audio-url.bin";
+      const filename =
+        options.filename || fetched.filenameHint || "audio-url.bin";
       const outputPath = join(tempDir, filename);
       await writeFile(outputPath, fetched.buffer);
       return outputPath;
@@ -714,7 +732,10 @@ export class SubtitleGenerator {
       if (bytes.length === 0) {
         throw new Error("audio_base64 decoded to an empty payload.");
       }
-      if (!options._allowLargeBase64 && bytes.length > TRANSCRIBE_SINGLE_CALL_MAX_BYTES) {
+      if (
+        !options._allowLargeBase64 &&
+        bytes.length > TRANSCRIBE_SINGLE_CALL_MAX_BYTES
+      ) {
         throw new Error(
           `Payload is ${bytes.length} bytes; max single-call size is ${TRANSCRIBE_SINGLE_CALL_MAX_BYTES} bytes. Use transcribe_upload_start / transcribe_upload_append / transcribe_upload_finalize for files this large, or pass audio_url.`,
         );
@@ -751,9 +772,14 @@ export class SubtitleGenerator {
       }
       const bytes = Buffer.from(match[1], "base64");
       if (bytes.length === 0) {
-        throw new Error("audio_resource_uri data URI decoded to empty payload.");
+        throw new Error(
+          "audio_resource_uri data URI decoded to empty payload.",
+        );
       }
-      if (!options._allowLargeBase64 && bytes.length > TRANSCRIBE_SINGLE_CALL_MAX_BYTES) {
+      if (
+        !options._allowLargeBase64 &&
+        bytes.length > TRANSCRIBE_SINGLE_CALL_MAX_BYTES
+      ) {
         throw new Error(
           `Payload is ${bytes.length} bytes; max single-call size is ${TRANSCRIBE_SINGLE_CALL_MAX_BYTES} bytes. Use transcribe_upload_start / transcribe_upload_append / transcribe_upload_finalize for files this large, or pass audio_url.`,
         );
@@ -845,7 +871,9 @@ export class SubtitleGenerator {
       }
       return {
         selectedEngine: "openai",
-        fallbackEngine: availableEngines.includes("local") ? "local" : undefined,
+        fallbackEngine: availableEngines.includes("local")
+          ? "local"
+          : undefined,
       };
     }
 
@@ -858,7 +886,9 @@ export class SubtitleGenerator {
       return { selectedEngine: "local" };
     }
 
-    const selectedEngine: WhisperEngineType = availableEngines.includes("openai")
+    const selectedEngine: WhisperEngineType = availableEngines.includes(
+      "openai",
+    )
       ? "openai"
       : "local";
     const fallbackEngine: WhisperEngineType | undefined =

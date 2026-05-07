@@ -1,6 +1,6 @@
-# Video Toolkit MCP Server
+# transcript-mcp
 
-[glama](https://glama.ai/mcp/servers/JamesANZ/video-toolkit-mcp)
+[glama](https://glama.ai/mcp/servers/JamesANZ/transcript-mcp)
 
 A Model Context Protocol (MCP) server that provides comprehensive video tools: transcript retrieval, video downloading, automatic subtitle generation, and direct audio transcription. Works with YouTube, Bilibili, Vimeo, and any platform supported by yt-dlp.
 
@@ -17,19 +17,19 @@ A Model Context Protocol (MCP) server that provides comprehensive video tools: t
 
 ## Tools
 
-| Tool                        | Description                                        |
-| --------------------------- | -------------------------------------------------- |
-| `get-transcript`            | Retrieve existing transcripts from video platforms |
-| `list-transcript-languages` | List available transcript languages for a video    |
-| `download-video`            | Download videos to local storage                   |
-| `list-downloads`            | List downloaded video files                        |
-| `generate-subtitles`        | Generate subtitles using AI speech-to-text         |
-| `transcribe-audio`          | Transcribe client-provided audio (URL / base64 / path / resource URI) |
-| `transcribe_upload_start`   | Start chunked upload for large audio payloads    |
-| `transcribe_upload_append`  | Append one base64 chunk to an upload session     |
-| `transcribe_upload_finalize` | Finish upload and run transcription             |
-| `transcribe_get_job`        | Poll async transcription jobs                    |
-| `transcribe_cancel_job`     | Cancel an async transcription job                |
+| Tool                         | Description                                                           |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `get-transcript`             | Retrieve existing transcripts from video platforms                    |
+| `list-transcript-languages`  | List available transcript languages for a video                       |
+| `download-video`             | Download videos to local storage                                      |
+| `list-downloads`             | List downloaded video files                                           |
+| `generate-subtitles`         | Generate subtitles using AI speech-to-text                            |
+| `transcribe-audio`           | Transcribe client-provided audio (URL / base64 / path / resource URI) |
+| `transcribe_upload_start`    | Start chunked upload for large audio payloads                         |
+| `transcribe_upload_append`   | Append one base64 chunk to an upload session                          |
+| `transcribe_upload_finalize` | Finish upload and run transcription                                   |
+| `transcribe_get_job`         | Poll async transcription jobs                                         |
+| `transcribe_cancel_job`      | Cancel an async transcription job                                     |
 
 ## Prerequisites
 
@@ -71,7 +71,7 @@ pip install openai-whisper
 
 ```bash
 git clone <repository-url>
-cd video-toolkit-mcp
+cd transcript-mcp
 npm install
 npm run build
 ```
@@ -79,7 +79,7 @@ npm run build
 ### Global Installation (after publishing)
 
 ```bash
-npm install -g video-toolkit-mcp
+npm install -g transcript-mcp
 ```
 
 ## Configuration
@@ -93,11 +93,11 @@ Add the MCP server to your configuration file:
 ```json
 {
   "mcpServers": {
-    "video-toolkit-mcp": {
+    "transcript-mcp": {
       "command": "node",
-      "args": ["/path/to/video-toolkit-mcp/dist/index.js"],
+      "args": ["/path/to/transcript-mcp/dist/index.js"],
       "env": {
-        "VIDEO_TOOLKIT_STORAGE_DIR": "/path/to/downloads",
+        "TRANSCRIPT_MCP_STORAGE_DIR": "/path/to/downloads",
         "OPENAI_API_KEY": "your-openai-api-key"
       }
     }
@@ -110,11 +110,11 @@ Add the MCP server to your configuration file:
 ```json
 {
   "mcpServers": {
-    "video-toolkit-mcp": {
+    "transcript-mcp": {
       "command": "node",
-      "args": ["/path/to/video-toolkit-mcp/dist/index.js"],
+      "args": ["/path/to/transcript-mcp/dist/index.js"],
       "env": {
-        "VIDEO_TOOLKIT_STORAGE_DIR": "/path/to/downloads",
+        "TRANSCRIPT_MCP_STORAGE_DIR": "/path/to/downloads",
         "OPENAI_API_KEY": "your-openai-api-key"
       }
     }
@@ -124,18 +124,20 @@ Add the MCP server to your configuration file:
 
 ### Environment Variables
 
-| Variable                       | Description                                            | Default                      |
-| ------------------------------ | ------------------------------------------------------ | ---------------------------- |
-| `VIDEO_TOOLKIT_STORAGE_DIR`    | Default directory for downloaded videos                | `~/.video-toolkit/downloads` |
-| `OPENAI_API_KEY`               | OpenAI API key for Whisper-based subtitle generation   | None                         |
-| `VIDEO_TOOLKIT_WHISPER_ENGINE` | Preferred whisper engine: `openai`, `local`, or `auto` | `auto`                       |
-| `WHISPER_BINARY_PATH`          | Path to local whisper binary                           | `whisper`                    |
-| `WHISPER_MODEL_PATH`           | Path to whisper model (for local whisper)              | Auto-download                |
-| `YT_DLP_PATH`                  | Path to yt-dlp binary                                  | `yt-dlp`                     |
-| `FFMPEG_PATH`                  | Path to ffmpeg binary                                  | `ffmpeg`                     |
-| `FFPROBE_PATH`                 | Path to ffprobe binary                                 | Derived from `FFMPEG_PATH`   |
-| `TRANSCRIPT_MCP_URL_ALLOWLIST` | Comma-separated host patterns allowed for `audio_url` (e.g. `*.amazonaws.com,localhost`). Empty disables all `audio_url` fetches | empty |
-| `DEBUG`                        | Enable debug logging                                   | `0`                          |
+| Variable                        | Description                                                                                                                      | Default                       |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `TRANSCRIPT_MCP_STORAGE_DIR`    | Default directory for downloaded videos                                                                                          | `~/.transcript-mcp/downloads` |
+| `OPENAI_API_KEY`                | OpenAI API key for Whisper-based subtitle generation                                                                             | None                          |
+| `TRANSCRIPT_MCP_WHISPER_ENGINE` | Preferred whisper engine: `openai`, `local`, or `auto`                                                                           | `auto`                        |
+| `VIDEO_TOOLKIT_STORAGE_DIR`     | Legacy alias for `TRANSCRIPT_MCP_STORAGE_DIR`                                                                                    | —                             |
+| `VIDEO_TOOLKIT_WHISPER_ENGINE`  | Legacy alias for `TRANSCRIPT_MCP_WHISPER_ENGINE`                                                                                 | —                             |
+| `WHISPER_BINARY_PATH`           | Path to local whisper binary                                                                                                     | `whisper`                     |
+| `WHISPER_MODEL_PATH`           | Path to whisper model (for local whisper)                                                                                        | Auto-download                |
+| `YT_DLP_PATH`                  | Path to yt-dlp binary                                                                                                            | `yt-dlp`                     |
+| `FFMPEG_PATH`                  | Path to ffmpeg binary                                                                                                            | `ffmpeg`                     |
+| `FFPROBE_PATH`                 | Path to ffprobe binary                                                                                                           | Derived from `FFMPEG_PATH`   |
+| `TRANSCRIPT_MCP_URL_ALLOWLIST` | Comma-separated host patterns allowed for `audio_url` (e.g. `*.amazonaws.com,localhost`). Empty disables all `audio_url` fetches | empty                        |
+| `DEBUG`                        | Enable debug logging                                                                                                             | `0`                          |
 
 ## Usage
 
@@ -247,7 +249,7 @@ Transcribe this presigned URL (after allowlisting the host): audio_url=...
 Transcribe this audio file on the MCP host: /path/to/interview.m4a
 ```
 
-### 7. transcribe_upload_* (chunked upload)
+### 7. transcribe*upload*\* (chunked upload)
 
 For large files, split the raw bytes into base64 chunks of at most **`max_chunk_bytes`** (~60KB) from `transcribe_upload_start`, call **`transcribe_upload_append`** for each index, then **`transcribe_upload_finalize`**. Abandoned uploads are garbage-collected after about an hour.
 
@@ -316,7 +318,7 @@ Full list: https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md
 ## Project Structure
 
 ```
-video-toolkit-mcp/
+transcript-mcp/
 ├── src/
 │   ├── index.ts              # Main MCP server entry point
 │   ├── transcript-fetcher.ts # Transcript fetching using yt-dlp

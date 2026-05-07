@@ -33,8 +33,7 @@ const packageJson = JSON.parse(
 const VERSION = packageJson.version;
 
 /**
- * MCP Server for Generic Video Transcript Retrieval
- * Provides tools for fetching transcripts from multiple video platforms
+ * transcript-mcp — MCP server for video transcript retrieval, downloads, subtitles, and audio transcription.
  */
 class TranscriptMCPServer {
   private server: Server;
@@ -48,7 +47,7 @@ class TranscriptMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: "video-toolkit-mcp-server",
+        name: "transcript-mcp",
         version: VERSION,
       },
       {
@@ -71,7 +70,9 @@ class TranscriptMCPServer {
 
     // Initialize subtitle generator
     this.subtitleGenerator = new SubtitleGenerator(this.config);
-    this.transcribeJobManager = new TranscribeJobManager(this.subtitleGenerator);
+    this.transcribeJobManager = new TranscribeJobManager(
+      this.subtitleGenerator,
+    );
     this.uploadSessionManager = new UploadSessionManager();
 
     this.setupHandlers();
@@ -310,7 +311,10 @@ class TranscriptMCPServer {
             $schema: "https://json-schema.org/draft/2020-12/schema",
             type: "object",
             properties: {
-              filename: { type: "string", description: "Original filename hint" },
+              filename: {
+                type: "string",
+                description: "Original filename hint",
+              },
               expected_chunks: {
                 type: "integer",
                 minimum: 1,
@@ -359,7 +363,8 @@ class TranscriptMCPServer {
         },
         {
           name: "transcribe_get_job",
-          description: "Poll an async transcription job created by transcribe-audio.",
+          description:
+            "Poll an async transcription job created by transcribe-audio.",
           inputSchema: {
             $schema: "https://json-schema.org/draft/2020-12/schema",
             type: "object",
@@ -477,7 +482,9 @@ class TranscriptMCPServer {
               args as { job_id: string; as_text?: boolean },
             );
           case "transcribe_cancel_job":
-            return await this.handleTranscribeCancelJob(args as { job_id: string });
+            return await this.handleTranscribeCancelJob(
+              args as { job_id: string },
+            );
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -896,12 +903,13 @@ class TranscriptMCPServer {
     language?: string;
     include_timestamps?: boolean;
   }): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const { uploadId, maxChunkBytes } = await this.uploadSessionManager.createSession({
-      filename: args.filename,
-      expectedChunks: args.expected_chunks,
-      language: args.language,
-      includeTimestamps: args.include_timestamps,
-    });
+    const { uploadId, maxChunkBytes } =
+      await this.uploadSessionManager.createSession({
+        filename: args.filename,
+        expectedChunks: args.expected_chunks,
+        language: args.language,
+        includeTimestamps: args.include_timestamps,
+      });
     return {
       content: [
         {
@@ -951,7 +959,9 @@ class TranscriptMCPServer {
 
     let tempDir: string | undefined;
     try {
-      const buffer = await this.uploadSessionManager.readConcatenated(args.upload_id);
+      const buffer = await this.uploadSessionManager.readConcatenated(
+        args.upload_id,
+      );
       tempDir = await mkdtemp(join(tmpdir(), "transcribe-upload-final-"));
       const filePath = join(tempDir, session.filename);
       await writeFile(filePath, buffer);
@@ -960,7 +970,8 @@ class TranscriptMCPServer {
         filePath,
         {
           language: args.language ?? session.language,
-          engine: (args.engine as WhisperEngineType | "auto" | undefined) || "auto",
+          engine:
+            (args.engine as WhisperEngineType | "auto" | undefined) || "auto",
           skipCompression: Boolean(args.skip_compression),
           filenameHint: session.filename,
           async: Boolean(args.async),
@@ -998,7 +1009,11 @@ class TranscriptMCPServer {
         content: [
           {
             type: "text",
-            text: this.formatTranscriptionPayload(job.result, args.as_text, false),
+            text: this.formatTranscriptionPayload(
+              job.result,
+              args.as_text,
+              false,
+            ),
           },
         ],
       };
@@ -1030,7 +1045,7 @@ class TranscriptMCPServer {
   async start(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error(`Video Toolkit MCP Server v${VERSION} running on stdio`);
+    console.error(`transcript-mcp v${VERSION} running on stdio`);
   }
 }
 

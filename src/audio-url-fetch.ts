@@ -16,7 +16,7 @@ export async function fetchAudioFromUrl(
   const patterns = parseUrlAllowlist(config.transcriptMcpUrlAllowlist);
   if (patterns.length === 0) {
     throw new Error(
-      "audio_url is disabled: TRANSCRIPT_MCP_URL_ALLOWLIST is empty. Set it to a comma-separated list of host patterns (e.g. \"*.amazonaws.com,localhost\") to allow server-side fetches.",
+      'audio_url is disabled: TRANSCRIPT_MCP_URL_ALLOWLIST is empty. Set it to a comma-separated list of host patterns (e.g. "*.amazonaws.com,localhost") to allow server-side fetches.',
     );
   }
 
@@ -48,7 +48,9 @@ export async function fetchAudioFromUrl(
       redirect: "follow",
     });
     if (!res.ok) {
-      throw new Error(`audio_url fetch failed: HTTP ${res.status} ${res.statusText}`);
+      throw new Error(
+        `audio_url fetch failed: HTTP ${res.status} ${res.statusText}`,
+      );
     }
 
     const cl = res.headers.get("content-length");
