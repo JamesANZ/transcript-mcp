@@ -13,9 +13,14 @@ RUN npm run build
 
 FROM node:22.17-bookworm-slim AS runtime
 
+# Bookworm's yt-dlp package is from 2023 and fails on current YouTube.
+# The upstream release file is a Python script, so it runs on Apple Silicon.
+# Python comes from the Debian package; the script replaces that old binary.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
- && curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" -o /usr/local/bin/yt-dlp \
+ && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg python3 yt-dlp \
+ && curl --http1.1 --retry 5 --retry-delay 2 -fsSL \
+      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" \
+      -o /usr/local/bin/yt-dlp \
  && chmod 755 /usr/local/bin/yt-dlp \
  && rm -rf /var/lib/apt/lists/*
 
